@@ -16,6 +16,7 @@ type Account = {
   envPath: string;
   sessionPath: string;
   logPath: string;
+  needsCredentials: boolean;
 };
 
 function isValidTag(tag: string): boolean {
@@ -55,17 +56,18 @@ async function chooseAccount(): Promise<Account> {
     envPath: resolve(directory, ".env"),
     sessionPath: resolve(directory, ".session"),
     logPath: resolve(directory, "auth.log"),
+    needsCredentials: false,
   };
 
   if (!existsSync(directory)) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(account.envPath, envTemplate, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    throw new Error(`Created .users/${tag}/.env. Add its Telegram credentials and run again.`);
+    return { ...account, needsCredentials: true };
   }
 
   if (!existsSync(account.envPath)) {
     await writeFile(account.envPath, envTemplate, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    throw new Error(`Created .users/${tag}/.env. Add its Telegram credentials and run again.`);
+    return { ...account, needsCredentials: true };
   }
 
   return account;
@@ -120,7 +122,10 @@ let activeAccount: Account | undefined;
 try {
   const account = await chooseAccount();
   activeAccount = account;
-  await log(account, `Selected account '${account.tag}'.`);
+  if (account.needsCredentials) {
+    console.log(`Created .users/${account.tag}/.env. Add its Telegram credentials, then run again.`);
+  } else {
+    await log(account, `Selected account '${account.tag}'.`);
   const { apiId, apiHash } = loadCredentials(account.envPath);
   await log(account, "Loaded account credentials from .env.");
   const savedSession = existsSync(account.sessionPath)
@@ -159,12 +164,20 @@ try {
     await writeFile(account.sessionPath, client.session.save(), { encoding: "utf8", mode: 0o600 });
     await log(account, "Authorization succeeded; saved a new session.");
     console.log(`Authenticated session saved to .users/${account.tag}/.session`);
+    }
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`Telegram authentication failed: ${message}`);
-  if (activeAccount) await log(activeAccount, `Authorization failed: ${message}`).catch(() => undefined);
-  process.exitCode = 1;
+  const credentialsAreIncomplete =
+    message === "TELEGRAM_API_ID must be a positive integer." ||
+    message === "TELEGRAM_API_HASH must be a 32-character hexadecimal string.";
+  if (activeAccount && credentialsAreIncomplete) {
+    console.log(`.users/${activeAccount.tag}/.env is incomplete. Add its Telegram credentials, then run again.`);
+  } else {
+    console.error(`Telegram authentication failed: ${message}`);
+    if (activeAccount) await log(activeAccount, `Authorization failed: ${message}`).catch(() => undefined);
+    process.exitCode = 1;
+  }
 } finally {
   await client?.destroy().catch(() => undefined);
 }
