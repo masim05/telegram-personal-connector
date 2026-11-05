@@ -139,16 +139,11 @@ try {
     const phoneNumber =
       process.env.TELEGRAM_PHONE?.trim() ??
       (await input.text("Telegram phone number (E.164, e.g. +15551234567): "));
-    const usesStoredCode = Boolean(process.env.TELEGRAM_LOGIN_CODE?.trim());
-    await log(
-      account,
-      `Requesting a fresh login code; authorization code source: ${usesStoredCode ? ".env" : "terminal prompt"}.`,
-    );
+    await log(account, "Requesting a fresh login code; it must be entered at the terminal prompt.");
     await client.start({
       phoneNumber,
       password: async () => input.password("Telegram 2FA password (if enabled): "),
-      phoneCode: async () =>
-        process.env.TELEGRAM_LOGIN_CODE?.trim() ?? input.text("Telegram login code: "),
+      phoneCode: async () => input.text("Telegram login code just sent to you: "),
       onError: (error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error("Telegram authorization error:", message);
