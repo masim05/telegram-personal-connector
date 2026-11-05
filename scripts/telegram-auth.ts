@@ -111,7 +111,7 @@ async function loadCredentials(account: Account) {
     changed = true;
   }
   if (!/^\+\d{7,15}$/.test(phoneNumber)) {
-    phoneNumber = await input.password("Telegram phone number (E.164, e.g. +15551234567): ", {
+    phoneNumber = await input.text("Telegram phone number (E.164, e.g. +15551234567): ", {
       validate: (value) =>
         /^\+\d{7,15}$/.test(value) ? true : "Enter a phone number in E.164 format.",
     });
