@@ -22,7 +22,7 @@ function isValidTag(tag: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(tag);
 }
 
-async function chooseAccount(): Promise<Account> {
+async function chooseAccount(requestedTag?: string): Promise<Account> {
   await mkdir(usersDirectory, { recursive: true, mode: 0o700 });
   const entries = await readdir(usersDirectory, { withFileTypes: true });
   const tags = entries
@@ -31,7 +31,9 @@ async function chooseAccount(): Promise<Account> {
     .sort();
 
   let tag: string;
-  if (tags.length) {
+  if (requestedTag) {
+    tag = requestedTag;
+  } else if (tags.length) {
     const selected = await input.select("Select a Telegram account", [
       ...tags.map((existingTag) => ({ name: existingTag, value: existingTag })),
       { name: "+ New account", value: "__create_new_account__" },
@@ -218,7 +220,11 @@ async function sessionWorks(client: TelegramClient, session: string): Promise<bo
 let client: TelegramClient | undefined;
 let activeAccount: Account | undefined;
 try {
-  const account = await chooseAccount();
+  const [requestedTag, ...extraArguments] = process.argv.slice(2);
+  if (extraArguments.length) {
+    throw new Error("Usage: npm run tg:auth [-- <account-tag>]");
+  }
+  const account = await chooseAccount(requestedTag);
   activeAccount = account;
   await log(account, `Selected account '${account.tag}'.`);
   const { apiId, apiHash, phoneNumber } = await loadCredentials(account);
