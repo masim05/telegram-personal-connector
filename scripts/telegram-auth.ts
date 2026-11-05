@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import input from "input";
 import { TelegramClient } from "telegram";
+import { Logger, LogLevel } from "telegram/extensions/Logger";
 import { StringSession } from "telegram/sessions";
 
 const usersDirectory = resolve(".users");
@@ -94,9 +95,13 @@ function loadCredentials(envPath: string) {
 }
 
 function createClient(session: string, apiId: number, apiHash: string): TelegramClient {
-  return new TelegramClient(new StringSession(session), apiId, apiHash, {
+  const client = new TelegramClient(new StringSession(session), apiId, apiHash, {
+    baseLogger: new Logger(LogLevel.NONE),
     connectionRetries: 5,
   });
+  // This command authenticates and exits; it never consumes Telegram updates.
+  (client as TelegramClient & { _loopStarted: boolean })._loopStarted = true;
+  return client;
 }
 
 async function sessionWorks(client: TelegramClient, session: string): Promise<boolean> {
@@ -161,5 +166,5 @@ try {
   if (activeAccount) await log(activeAccount, `Authorization failed: ${message}`).catch(() => undefined);
   process.exitCode = 1;
 } finally {
-  await client?.disconnect().catch(() => undefined);
+  await client?.destroy().catch(() => undefined);
 }
