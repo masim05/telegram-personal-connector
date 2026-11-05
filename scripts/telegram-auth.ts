@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import input from "input";
@@ -14,6 +14,7 @@ type Account = {
   directory: string;
   envPath: string;
   sessionPath: string;
+  logPath: string;
 };
 
 function isValidTag(tag: string): boolean {
@@ -40,6 +41,7 @@ async function chooseAccount(): Promise<Account> {
     directory,
     envPath: resolve(directory, ".env"),
     sessionPath: resolve(directory, ".session"),
+    logPath: resolve(directory, "auth.log"),
   };
 
   if (!existsSync(directory)) {
@@ -54,6 +56,13 @@ async function chooseAccount(): Promise<Account> {
   }
 
   return account;
+}
+
+async function log(account: Account, message: string): Promise<void> {
+  const line = `${new Date().toISOString()} ${message}\n`;
+  // Keep diagnostics useful without writing account secrets or message content.
+  await appendFile(account.logPath, line, { encoding: "utf8", mode: 0o600 });
+  console.log(`[tg-auth] ${message}`);
 }
 
 function loadCredentials(envPath: string) {
@@ -90,12 +99,17 @@ async function sessionWorks(client: TelegramClient, session: string): Promise<bo
 }
 
 let client: TelegramClient | undefined;
+let activeAccount: Account | undefined;
 try {
   const account = await chooseAccount();
+  activeAccount = account;
+  await log(account, `Selected account '${account.tag}'.`);
   const { apiId, apiHash } = loadCredentials(account.envPath);
+  await log(account, "Loaded account credentials from .env.");
   const savedSession = existsSync(account.sessionPath)
     ? await readFile(account.sessionPath, "utf8")
     : "";
+  await log(account, savedSession.trim() ? "Found an existing session; validating it." : "No saved session found.");
 
   try {
     client = createClient(savedSession.trim(), apiId, apiHash);
@@ -104,24 +118,40 @@ try {
   }
 
   if (await sessionWorks(client, savedSession)) {
+    await log(account, "Existing session is valid.");
     console.log(`Existing session for ${account.tag} is valid.`);
   } else {
+    await log(account, "Session is unavailable or invalid; starting interactive authorization.");
     await client.disconnect().catch(() => undefined);
     client = createClient("", apiId, apiHash);
+    const phoneNumber =
+      process.env.TELEGRAM_PHONE?.trim() ??
+      (await input.text("Telegram phone number (E.164, e.g. +15551234567): "));
+    const usesStoredCode = Boolean(process.env.TELEGRAM_LOGIN_CODE?.trim());
+    await log(
+      account,
+      `Requesting a fresh login code; authorization code source: ${usesStoredCode ? ".env" : "terminal prompt"}.`,
+    );
     await client.start({
-      phoneNumber: async () =>
-        process.env.TELEGRAM_PHONE ??
-        input.text("Telegram phone number (E.164, e.g. +15551234567): "),
+      phoneNumber,
       password: async () => input.password("Telegram 2FA password (if enabled): "),
-      phoneCode: async () => input.text("Telegram login code: "),
-      onError: (error) => console.error("Telegram authorization error:", error.message),
+      phoneCode: async () =>
+        process.env.TELEGRAM_LOGIN_CODE?.trim() ?? input.text("Telegram login code: "),
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("Telegram authorization error:", message);
+        void log(account, `Authorization callback reported: ${message}`).catch(() => undefined);
+        return true;
+      },
     });
     await writeFile(account.sessionPath, client.session.save(), { encoding: "utf8", mode: 0o600 });
+    await log(account, "Authorization succeeded; saved a new session.");
     console.log(`Authenticated session saved to .users/${account.tag}/.session`);
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Telegram authentication failed: ${message}`);
+  if (activeAccount) await log(activeAccount, `Authorization failed: ${message}`).catch(() => undefined);
   process.exitCode = 1;
 } finally {
   await client?.disconnect().catch(() => undefined);
