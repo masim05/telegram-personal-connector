@@ -1,0 +1,16 @@
+{
+  "name": "telegram-personal-connector",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tg:auth": "tsx scripts/telegram-auth.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "input": "^1.0.1",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6"
+  }
+}
