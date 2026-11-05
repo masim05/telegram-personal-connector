@@ -85,6 +85,71 @@ function setEnvValue(content: string, name: string, value: string): string {
   return `${content.trimEnd()}\n${line}\n`;
 }
 
+function partiallyMasked(value: string): string {
+  if (value.length <= 4) return value;
+  return `${value.slice(0, 2)}${"*".repeat(value.length - 4)}${value.slice(-2)}`;
+}
+
+async function partiallyMaskedInput(
+  label: string,
+  validate: (value: string) => true | string,
+): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return input.password(label, { validate });
+  }
+
+  return new Promise((resolve, reject) => {
+    let value = "";
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    const wasRaw = stdin.isRaw;
+    const prefix = `? ${label} `;
+
+    const render = () => stdout.write(`\r\x1b[2K${prefix}${partiallyMasked(value)}`);
+    const cleanup = () => {
+      stdin.setRawMode(wasRaw ?? false);
+      stdin.pause();
+      stdin.off("data", onData);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString("utf8")) {
+        if (character === "\u0003") {
+          cleanup();
+          reject(new Error("Authentication cancelled."));
+          return;
+        }
+        if (character === "\r" || character === "\n") {
+          const result = validate(value);
+          if (result === true) {
+            cleanup();
+            stdout.write("\n");
+            resolve(value);
+            return;
+          }
+          value = "";
+          stdout.write(`\n${result}\n`);
+          render();
+          continue;
+        }
+        if (character === "\b" || character === "\x7f") {
+          value = value.slice(0, -1);
+          render();
+          continue;
+        }
+        if (character >= " ") {
+          value += character;
+          render();
+        }
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}
+
 async function loadCredentials(account: Account) {
   const loaded = dotenv.config({ path: account.envPath, override: true });
   if (loaded.error) throw loaded.error;
@@ -95,19 +160,16 @@ async function loadCredentials(account: Account) {
   let changed = false;
 
   if (!/^\d+$/.test(apiIdValue) || !Number.isSafeInteger(Number(apiIdValue)) || Number(apiIdValue) <= 0) {
-    apiIdValue = await input.password("Telegram API ID: ", {
-      validate: (value) =>
+    apiIdValue = await partiallyMaskedInput("Telegram API ID:", (value) =>
         /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0
           ? true
-          : "Enter a positive numeric API ID.",
-    });
+          : "Enter a positive numeric API ID.");
     changed = true;
   }
   if (!/^[0-9a-f]{32}$/i.test(apiHash)) {
-    apiHash = await input.password("Telegram API hash: ", {
-      validate: (value) =>
+    apiHash = await partiallyMaskedInput("Telegram API hash:", (value) =>
         /^[0-9a-f]{32}$/i.test(value) ? true : "Enter the 32-character hexadecimal API hash.",
-    });
+    );
     changed = true;
   }
   if (!/^\+\d{7,15}$/.test(phoneNumber)) {
@@ -183,7 +245,11 @@ try {
     await client.start({
       phoneNumber,
       password: async () => input.password("Telegram 2FA password (if enabled): "),
-      phoneCode: async () => input.text("Telegram login code just sent to you: "),
+      phoneCode: async () =>
+        partiallyMaskedInput(
+          "Telegram login code just sent to you:",
+          (value) => (value.trim() ? true : "Enter the login code Telegram just sent."),
+        ),
       onError: (error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error("Telegram authorization error:", message);
