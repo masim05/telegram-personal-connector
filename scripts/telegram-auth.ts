@@ -29,8 +29,20 @@ async function chooseAccount(): Promise<Account> {
     .map((entry) => entry.name)
     .sort();
 
-  if (tags.length) console.log(`Available accounts: ${tags.join(", ")}`);
-  const tag = (await input.text("Choose an account tag, or enter a new one: ")).trim();
+  let tag: string;
+  if (tags.length) {
+    const selected = await input.select("Select a Telegram account", [
+      ...tags.map((existingTag) => ({ name: existingTag, value: existingTag })),
+      { name: "+ New account", value: "__create_new_account__" },
+    ]);
+    tag =
+      selected === "__create_new_account__"
+        ? (await input.text("New account tag: ")).trim()
+        : selected;
+  } else {
+    tag = (await input.text("New account tag: ")).trim();
+  }
+
   if (!isValidTag(tag)) {
     throw new Error("Account tags may contain letters, numbers, hyphens, and underscores.");
   }
